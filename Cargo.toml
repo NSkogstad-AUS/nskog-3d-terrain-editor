@@ -1,0 +1,19 @@
+[package]
+name = "terrain-bootstrap"
+version = "0.1.0"
+edition = "2021"
+
+[features]
+default = []
+ui = ["egui", "egui-winit", "egui-wgpu"]
+
+[dependencies]
+winit = "0.29"
+wgpu = "0.19"
+glam = "0.27"
+pollster = "0.3"
+
+# UI (optional)
+egui = { version = "0.27", optional = true }
+egui-winit = { version = "0.27", optional = true }
+egui-wgpu = { version = "0.27", optional = true, features = ["winit"] }

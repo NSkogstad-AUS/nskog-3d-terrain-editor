@@ -1,0 +1,321 @@
+use glam::Vec3;
+use std::error::Error;
+use wgpu::{SurfaceError, SurfaceTargetUnsafe};
+use winit::{
+    dpi::PhysicalSize,
+    event::{Event, WindowEvent},
+    event_loop::EventLoop,
+    window::{Window, WindowBuilder},
+};
+
+#[cfg(feature = "ui")]
+use egui_wgpu::ScreenDescriptor;
+
+struct State {
+    surface: wgpu::Surface<'static>,
+    device: wgpu::Device,
+    queue: wgpu::Queue,
+    config: wgpu::SurfaceConfiguration,
+    window: Window,
+    size: PhysicalSize<u32>,
+    clear: Vec3,
+    #[cfg(feature = "ui")]
+    gui: Gui,
+}
+
+impl State {
+    async fn new(event_loop: &EventLoop<()>) -> Result<Self, Box<dyn Error>> {
+        let window = WindowBuilder::new()
+            .with_title("wgpu + winit bootstrap")
+            .build(event_loop)?;
+
+        let size = window.inner_size();
+        let instance = wgpu::Instance::new(wgpu::InstanceDescriptor {
+            backends: wgpu::Backends::all(),
+            ..Default::default()
+        });
+        let surface = unsafe {
+            instance.create_surface_unsafe(SurfaceTargetUnsafe::from_window(&window)?)?
+        };
+
+        let adapter = instance
+            .request_adapter(&wgpu::RequestAdapterOptions {
+                power_preference: wgpu::PowerPreference::HighPerformance,
+                compatible_surface: Some(&surface),
+                force_fallback_adapter: false,
+            })
+            .await
+            .ok_or("No suitable GPU adapter found")?;
+
+        let (device, queue) = adapter
+            .request_device(
+                &wgpu::DeviceDescriptor {
+                    label: Some("wgpu device"),
+                    required_features: wgpu::Features::empty(),
+                    required_limits: wgpu::Limits::default(),
+                },
+                None,
+            )
+            .await?;
+
+        let surface_caps = surface.get_capabilities(&adapter);
+        let surface_format = surface_caps
+            .formats
+            .iter()
+            .copied()
+            .find(|f| f.is_srgb())
+            .unwrap_or(surface_caps.formats[0]);
+
+        let config = wgpu::SurfaceConfiguration {
+            usage: wgpu::TextureUsages::RENDER_ATTACHMENT,
+            format: surface_format,
+            width: size.width.max(1),
+            height: size.height.max(1),
+            present_mode: wgpu::PresentMode::Fifo,
+            desired_maximum_frame_latency: 2,
+            alpha_mode: surface_caps.alpha_modes[0],
+            view_formats: vec![],
+        };
+        surface.configure(&device, &config);
+
+        #[cfg(feature = "ui")]
+        let gui = Gui::new(&window, &device, surface_format);
+
+        Ok(Self {
+            surface,
+            device,
+            queue,
+            config,
+            window,
+            size,
+            clear: Vec3::new(0.05, 0.08, 0.1),
+            #[cfg(feature = "ui")]
+            gui,
+        })
+    }
+
+    fn window(&self) -> &Window {
+        &self.window
+    }
+
+    fn resize(&mut self, new_size: PhysicalSize<u32>) {
+        if new_size.width > 0 && new_size.height > 0 {
+            self.size = new_size;
+            self.config.width = new_size.width;
+            self.config.height = new_size.height;
+            self.surface.configure(&self.device, &self.config);
+        }
+    }
+
+    fn input(&mut self, event: &WindowEvent) -> bool {
+        #[cfg(feature = "ui")]
+        {
+            if self.gui.on_event(&self.window, event) {
+                return true;
+            }
+        }
+        false
+    }
+
+    fn update(&mut self) {
+        // hook for per-frame updates
+    }
+
+    fn render(&mut self) -> Result<(), SurfaceError> {
+        let frame = self.surface.get_current_texture()?;
+        let view = frame
+            .texture
+            .create_view(&wgpu::TextureViewDescriptor::default());
+        let mut encoder =
+            self.device
+                .create_command_encoder(&wgpu::CommandEncoderDescriptor {
+                    label: Some("render encoder"),
+                });
+
+        let clear = wgpu::Color {
+            r: self.clear.x as f64,
+            g: self.clear.y as f64,
+            b: self.clear.z as f64,
+            a: 1.0,
+        };
+
+        #[cfg(feature = "ui")]
+        let user_cmd_bufs = self.gui.draw(
+            &self.window,
+            &self.device,
+            &self.queue,
+            &view,
+            &mut encoder,
+            &self.config,
+            clear,
+        );
+
+        #[cfg(not(feature = "ui"))]
+        {
+            let _pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
+                label: Some("clear pass"),
+                color_attachments: &[Some(wgpu::RenderPassColorAttachment {
+                    view: &view,
+                    resolve_target: None,
+                    ops: wgpu::Operations {
+                        load: wgpu::LoadOp::Clear(clear),
+                        store: wgpu::StoreOp::Store,
+                    },
+                })],
+                depth_stencil_attachment: None,
+                occlusion_query_set: None,
+                timestamp_writes: None,
+            });
+        }
+
+        #[cfg(feature = "ui")]
+        {
+            let mut submits = user_cmd_bufs;
+            submits.push(encoder.finish());
+            self.queue.submit(submits);
+        }
+        #[cfg(not(feature = "ui"))]
+        self.queue.submit(Some(encoder.finish()));
+
+        frame.present();
+        Ok(())
+    }
+}
+
+#[cfg(feature = "ui")]
+struct Gui {
+    ctx: egui::Context,
+    state: egui_winit::State,
+    renderer: egui_wgpu::Renderer,
+}
+
+#[cfg(feature = "ui")]
+impl Gui {
+    fn new(window: &Window, device: &wgpu::Device, surface_format: wgpu::TextureFormat) -> Self {
+        let ctx = egui::Context::default();
+        let state = egui_winit::State::new(
+            ctx.clone(),
+            egui::ViewportId::ROOT,
+            window,
+            Some(window.scale_factor() as f32),
+            None,
+        );
+        let renderer = egui_wgpu::Renderer::new(device, surface_format, None, 1);
+        Self {
+            ctx,
+            state,
+            renderer,
+        }
+    }
+
+    fn on_event(&mut self, window: &Window, event: &WindowEvent) -> bool {
+        self.state.on_window_event(window, event).consumed
+    }
+
+    fn draw(
+        &mut self,
+        window: &Window,
+        device: &wgpu::Device,
+        queue: &wgpu::Queue,
+        view: &wgpu::TextureView,
+        encoder: &mut wgpu::CommandEncoder,
+        surface_config: &wgpu::SurfaceConfiguration,
+        clear: wgpu::Color,
+    ) -> Vec<wgpu::CommandBuffer> {
+        let raw_input = self.state.take_egui_input(window);
+        let full_output = self.ctx.run(raw_input, |ctx| {
+            egui::Window::new("Overlay")
+                .resizable(false)
+                .show(ctx, |ui| {
+                    ui.label("egui wired up");
+                });
+        });
+
+        self.state
+            .handle_platform_output(window, full_output.platform_output);
+
+        for (id, delta) in full_output.textures_delta.set {
+            self.renderer.update_texture(device, queue, id, &delta);
+        }
+
+        let pixels_per_point = egui_winit::pixels_per_point(&self.ctx, window);
+        let primitives = self
+            .ctx
+            .tessellate(full_output.shapes, pixels_per_point);
+        let screen_descriptor = ScreenDescriptor {
+            size_in_pixels: [surface_config.width, surface_config.height],
+            pixels_per_point,
+        };
+        let user_cmd_bufs = self.renderer.update_buffers(
+            device,
+            queue,
+            encoder,
+            &primitives,
+            &screen_descriptor,
+        );
+
+        {
+            let mut pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
+                label: Some("egui pass"),
+                color_attachments: &[Some(wgpu::RenderPassColorAttachment {
+                    view,
+                    resolve_target: None,
+                    ops: wgpu::Operations {
+                        load: wgpu::LoadOp::Clear(clear),
+                        store: wgpu::StoreOp::Store,
+                    },
+                })],
+                depth_stencil_attachment: None,
+                occlusion_query_set: None,
+                timestamp_writes: None,
+            });
+            self.renderer
+                .render(&mut pass, &primitives, &screen_descriptor);
+        }
+
+        for id in full_output.textures_delta.free {
+            self.renderer.free_texture(&id);
+        }
+
+        user_cmd_bufs
+    }
+}
+
+fn main() -> Result<(), Box<dyn Error>> {
+    let event_loop = EventLoop::new()?;
+    let mut state = pollster::block_on(State::new(&event_loop))?;
+
+    event_loop.run(move |event, elwt| {
+        match event {
+            Event::WindowEvent { event, window_id }
+                if window_id == state.window().id() =>
+            {
+                if !state.input(&event) {
+                    match event {
+                        WindowEvent::CloseRequested => elwt.exit(),
+                        WindowEvent::Resized(size) => state.resize(size),
+                        WindowEvent::ScaleFactorChanged { .. } => {
+                            state.resize(state.window().inner_size());
+                        }
+                        WindowEvent::RedrawRequested => {
+                            state.update();
+                            match state.render() {
+                                Ok(_) => {}
+                                Err(SurfaceError::Lost | SurfaceError::Outdated) => {
+                                    state.resize(state.size)
+                                }
+                                Err(SurfaceError::OutOfMemory) => elwt.exit(),
+                                Err(e) => eprintln!("render error: {e:?}"),
+                            }
+                        }
+                        _ => {}
+                    }
+                }
+            }
+            Event::AboutToWait => state.window().request_redraw(),
+            _ => {}
+        }
+    })?;
+
+    Ok(())
+}
