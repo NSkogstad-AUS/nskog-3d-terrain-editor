@@ -1,3 +1,11 @@
+struct Globals {
+    offset: vec2<f32>,
+    _pad: vec2<f32>,
+};
+
+@group(0) @binding(0)
+var<uniform> globals: Globals;
+
 struct VsOut {
     @builtin(position) position: vec4<f32>,
     @location(0) color: vec3<f32>,
@@ -6,7 +14,7 @@ struct VsOut {
 @vertex
 fn vs_main(@location(0) pos: vec2<f32>, @location(1) color: vec3<f32>) -> VsOut {
     var out: VsOut;
-    out.position = vec4<f32>(pos, 0.0, 1.0);
+    out.position = vec4<f32>(pos + globals.offset, 0.0, 1.0);
     out.color = color;
     return out;
 }

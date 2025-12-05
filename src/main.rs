@@ -1,7 +1,9 @@
 use glam::Vec3;
 use std::error::Error;
+use std::time::Instant;
 use wgpu::{SurfaceError, SurfaceTargetUnsafe};
 
+mod input;
 mod triangle;
 use winit::{
     dpi::PhysicalSize,
@@ -21,6 +23,8 @@ struct State {
     window: Window,
     size: PhysicalSize<u32>,
     clear: Vec3,
+    input: input::InputState,
+    last_frame: Instant,
     triangle: triangle::TrianglePipeline,
     #[cfg(feature = "ui")]
     gui: Gui,
@@ -94,6 +98,8 @@ impl State {
             window,
             size,
             clear: Vec3::new(0.05, 0.08, 0.1),
+            input: input::InputState::new(0.6),
+            last_frame: Instant::now(),
             triangle,
             #[cfg(feature = "ui")]
             gui,
@@ -120,11 +126,19 @@ impl State {
                 return true;
             }
         }
+        if let WindowEvent::KeyboardInput { event, .. } = event {
+            return self.input.handle_key(event);
+        }
         false
     }
 
     fn update(&mut self) {
-        // hook for per-frame updates
+        let now = Instant::now();
+        let dt = (now - self.last_frame).as_secs_f32();
+        self.last_frame = now;
+
+        self.input.update(dt);
+        self.triangle.update_offset(&self.queue, self.input.offset);
     }
 
     fn render(&mut self) -> Result<(), SurfaceError> {
