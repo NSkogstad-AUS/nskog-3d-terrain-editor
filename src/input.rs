@@ -9,6 +9,7 @@ pub struct InputState {
     a: bool,
     s: bool,
     d: bool,
+    randomize: bool,
 }
 
 impl InputState {
@@ -20,6 +21,7 @@ impl InputState {
             a: false,
             s: false,
             d: false,
+            randomize: false,
         }
     }
 
@@ -30,6 +32,9 @@ impl InputState {
             PhysicalKey::Code(KeyCode::KeyA) => self.a = pressed,
             PhysicalKey::Code(KeyCode::KeyS) => self.s = pressed,
             PhysicalKey::Code(KeyCode::KeyD) => self.d = pressed,
+            PhysicalKey::Code(KeyCode::KeyR) if pressed => {
+                self.randomize = true;
+            }
             _ => return false,
         }
         true
@@ -54,5 +59,11 @@ impl InputState {
             let delta = dir.normalize_or_zero() * self.speed * dt;
             self.offset += delta;
         }
+    }
+
+    pub fn take_randomize(&mut self) -> bool {
+        let r = self.randomize;
+        self.randomize = false;
+        r
     }
 }

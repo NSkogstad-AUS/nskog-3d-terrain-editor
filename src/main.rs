@@ -1,10 +1,11 @@
-use glam::Vec3;
+use glam::{Mat4, Vec3};
+use rand::{rngs::StdRng, SeedableRng};
 use std::error::Error;
 use std::time::Instant;
 use wgpu::{SurfaceError, SurfaceTargetUnsafe};
 
 mod input;
-mod triangle;
+mod terrain;
 use winit::{
     dpi::PhysicalSize,
     event::{Event, WindowEvent},
@@ -25,7 +26,8 @@ struct State {
     clear: Vec3,
     input: input::InputState,
     last_frame: Instant,
-    triangle: triangle::TrianglePipeline,
+    rng: StdRng,
+    terrain: terrain::Terrain,
     #[cfg(feature = "ui")]
     gui: Gui,
 }
@@ -85,7 +87,8 @@ impl State {
         };
         surface.configure(&device, &config);
 
-        let triangle = triangle::TrianglePipeline::new(&device, surface_format);
+        let mut rng = StdRng::from_entropy();
+        let terrain = terrain::Terrain::new(&device, surface_format, &mut rng);
 
         #[cfg(feature = "ui")]
         let gui = Gui::new(&window, &device, surface_format);
@@ -100,7 +103,8 @@ impl State {
             clear: Vec3::new(0.05, 0.08, 0.1),
             input: input::InputState::new(0.6),
             last_frame: Instant::now(),
-            triangle,
+            rng,
+            terrain,
             #[cfg(feature = "ui")]
             gui,
         })
@@ -138,7 +142,18 @@ impl State {
         self.last_frame = now;
 
         self.input.update(dt);
-        self.triangle.update_offset(&self.queue, self.input.offset);
+        let aspect = self.config.width.max(1) as f32 / self.config.height.max(1) as f32;
+        let camera_offset = self.input.offset;
+        let eye = Vec3::new(4.0 + camera_offset.x, 4.0, 6.0 + camera_offset.y);
+        let target = Vec3::new(camera_offset.x, 0.0, camera_offset.y);
+        let view = Mat4::look_at_rh(eye, target, Vec3::Y);
+        let proj = Mat4::perspective_rh(50f32.to_radians(), aspect, 0.1, 100.0);
+        let view_proj = proj * view;
+        self.terrain.update_view(&self.queue, view_proj);
+
+        if self.input.take_randomize() {
+            self.terrain.randomize(&self.queue, &mut self.rng);
+        }
     }
 
     fn render(&mut self) -> Result<(), SurfaceError> {
@@ -161,7 +176,7 @@ impl State {
 
         {
             let mut pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
-                label: Some("triangle pass"),
+                label: Some("terrain pass"),
                 color_attachments: &[Some(wgpu::RenderPassColorAttachment {
                     view: &view,
                     resolve_target: None,
@@ -174,11 +189,11 @@ impl State {
                 occlusion_query_set: None,
                 timestamp_writes: None,
             });
-            self.triangle.draw(&mut pass);
+            self.terrain.draw(&mut pass);
         }
 
         #[cfg(feature = "ui")]
-        let user_cmd_bufs = self.gui.draw(
+        let ui_frame = self.gui.draw(
             &self.window,
             &self.device,
             &self.queue,
@@ -189,9 +204,12 @@ impl State {
 
         #[cfg(feature = "ui")]
         {
-            let mut submits = user_cmd_bufs;
+            let mut submits = ui_frame.commands;
             submits.push(encoder.finish());
             self.queue.submit(submits);
+            if ui_frame.randomize {
+                self.terrain.randomize(&self.queue, &mut self.rng);
+            }
         }
         #[cfg(not(feature = "ui"))]
         self.queue.submit(Some(encoder.finish()));
@@ -206,6 +224,12 @@ struct Gui {
     ctx: egui::Context,
     state: egui_winit::State,
     renderer: egui_wgpu::Renderer,
+}
+
+#[cfg(feature = "ui")]
+struct UiFrame {
+    commands: Vec<wgpu::CommandBuffer>,
+    randomize: bool,
 }
 
 #[cfg(feature = "ui")]
@@ -239,13 +263,17 @@ impl Gui {
         view: &wgpu::TextureView,
         encoder: &mut wgpu::CommandEncoder,
         surface_config: &wgpu::SurfaceConfiguration,
-    ) -> Vec<wgpu::CommandBuffer> {
+    ) -> UiFrame {
         let raw_input = self.state.take_egui_input(window);
+        let mut randomize = false;
         let full_output = self.ctx.run(raw_input, |ctx| {
             egui::Window::new("Overlay")
                 .resizable(false)
                 .show(ctx, |ui| {
-                    ui.label("egui wired up");
+                    ui.label("Procedural terrain");
+                    if ui.button("Randomise").clicked() {
+                        randomize = true;
+                    }
                 });
         });
 
@@ -295,7 +323,10 @@ impl Gui {
             self.renderer.free_texture(&id);
         }
 
-        user_cmd_bufs
+        UiFrame {
+            commands: user_cmd_bufs,
+            randomize,
+        }
     }
 }
 
