@@ -1,6 +1,8 @@
 use glam::Vec3;
 use std::error::Error;
 use wgpu::{SurfaceError, SurfaceTargetUnsafe};
+
+mod triangle;
 use winit::{
     dpi::PhysicalSize,
     event::{Event, WindowEvent},
@@ -19,6 +21,7 @@ struct State {
     window: Window,
     size: PhysicalSize<u32>,
     clear: Vec3,
+    triangle: triangle::TrianglePipeline,
     #[cfg(feature = "ui")]
     gui: Gui,
 }
@@ -78,6 +81,8 @@ impl State {
         };
         surface.configure(&device, &config);
 
+        let triangle = triangle::TrianglePipeline::new(&device, surface_format);
+
         #[cfg(feature = "ui")]
         let gui = Gui::new(&window, &device, surface_format);
 
@@ -89,6 +94,7 @@ impl State {
             window,
             size,
             clear: Vec3::new(0.05, 0.08, 0.1),
+            triangle,
             #[cfg(feature = "ui")]
             gui,
         })
@@ -139,21 +145,9 @@ impl State {
             a: 1.0,
         };
 
-        #[cfg(feature = "ui")]
-        let user_cmd_bufs = self.gui.draw(
-            &self.window,
-            &self.device,
-            &self.queue,
-            &view,
-            &mut encoder,
-            &self.config,
-            clear,
-        );
-
-        #[cfg(not(feature = "ui"))]
         {
-            let _pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
-                label: Some("clear pass"),
+            let mut pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
+                label: Some("triangle pass"),
                 color_attachments: &[Some(wgpu::RenderPassColorAttachment {
                     view: &view,
                     resolve_target: None,
@@ -166,7 +160,18 @@ impl State {
                 occlusion_query_set: None,
                 timestamp_writes: None,
             });
+            self.triangle.draw(&mut pass);
         }
+
+        #[cfg(feature = "ui")]
+        let user_cmd_bufs = self.gui.draw(
+            &self.window,
+            &self.device,
+            &self.queue,
+            &view,
+            &mut encoder,
+            &self.config,
+        );
 
         #[cfg(feature = "ui")]
         {
@@ -220,7 +225,6 @@ impl Gui {
         view: &wgpu::TextureView,
         encoder: &mut wgpu::CommandEncoder,
         surface_config: &wgpu::SurfaceConfiguration,
-        clear: wgpu::Color,
     ) -> Vec<wgpu::CommandBuffer> {
         let raw_input = self.state.take_egui_input(window);
         let full_output = self.ctx.run(raw_input, |ctx| {
@@ -261,7 +265,7 @@ impl Gui {
                     view,
                     resolve_target: None,
                     ops: wgpu::Operations {
-                        load: wgpu::LoadOp::Clear(clear),
+                        load: wgpu::LoadOp::Load,
                         store: wgpu::StoreOp::Store,
                     },
                 })],
