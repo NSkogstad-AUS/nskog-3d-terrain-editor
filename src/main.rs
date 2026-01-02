@@ -5,12 +5,14 @@ use std::time::Instant;
 use wgpu::{SurfaceError, SurfaceTargetUnsafe};
 
 mod input;
+mod depth;
 mod terrain;
+mod water;
 use winit::{
     dpi::PhysicalSize,
-    event::{Event, WindowEvent},
+    event::{DeviceEvent, Event, MouseButton, WindowEvent},
     event_loop::EventLoop,
-    window::{Window, WindowBuilder},
+    window::{CursorGrabMode, Window, WindowBuilder},
 };
 
 #[cfg(feature = "ui")]
@@ -24,10 +26,12 @@ struct State {
     window: Window,
     size: PhysicalSize<u32>,
     clear: Vec3,
+    depth: depth::DepthTexture,
     input: input::InputState,
     last_frame: Instant,
     rng: StdRng,
     terrain: terrain::Terrain,
+    water: water::Water,
     #[cfg(feature = "ui")]
     gui: Gui,
 }
@@ -89,6 +93,8 @@ impl State {
 
         let mut rng = StdRng::from_entropy();
         let terrain = terrain::Terrain::new(&device, surface_format, &mut rng);
+        let depth = depth::DepthTexture::new(&device, &config);
+        let water = water::Water::new(&device, surface_format, terrain::WATER_LEVEL);
 
         #[cfg(feature = "ui")]
         let gui = Gui::new(&window, &device, surface_format);
@@ -101,10 +107,12 @@ impl State {
             window,
             size,
             clear: Vec3::new(0.05, 0.08, 0.1),
-            input: input::InputState::new(0.6),
+            depth,
+            input: input::InputState::new(terrain::WORLD_RADIUS * 0.12),
             last_frame: Instant::now(),
             rng,
             terrain,
+            water,
             #[cfg(feature = "ui")]
             gui,
         })
@@ -120,20 +128,64 @@ impl State {
             self.config.width = new_size.width;
             self.config.height = new_size.height;
             self.surface.configure(&self.device, &self.config);
+            self.depth = depth::DepthTexture::new(&self.device, &self.config);
         }
     }
 
     fn input(&mut self, event: &WindowEvent) -> bool {
+        let mut handled = false;
+
+        match event {
+            WindowEvent::MouseInput { state, button, .. } => {
+                if *button == MouseButton::Left && *state == winit::event::ElementState::Pressed {
+                    self.input.active = true;
+                    self.set_cursor_grab(true);
+                    handled = true;
+                }
+            }
+            WindowEvent::CursorMoved { position, .. } => {
+                let pos = glam::Vec2::new(position.x as f32, position.y as f32);
+                self.input.handle_cursor_move(pos);
+                handled = true;
+            }
+            WindowEvent::Focused(false) => {
+                self.input.active = false;
+                self.set_cursor_grab(false);
+            }
+            WindowEvent::Focused(true) => {
+                self.input.active = false;
+            }
+            WindowEvent::KeyboardInput { event, .. } => {
+                handled |= self.input.handle_key(event);
+            }
+            _ => {}
+        }
+
         #[cfg(feature = "ui")]
         {
             if self.gui.on_event(&self.window, event) {
-                return true;
+                handled = true;
             }
         }
-        if let WindowEvent::KeyboardInput { event, .. } = event {
-            return self.input.handle_key(event);
+
+        handled
+    }
+
+    fn set_cursor_grab(&self, grab: bool) {
+        if grab {
+            if self
+                .window
+                .set_cursor_grab(CursorGrabMode::Locked)
+                .or_else(|_| self.window.set_cursor_grab(CursorGrabMode::Confined))
+                .is_err()
+            {
+                eprintln!("Could not lock cursor");
+            }
+            let _ = self.window.set_cursor_visible(false);
+        } else {
+            let _ = self.window.set_cursor_grab(CursorGrabMode::None);
+            let _ = self.window.set_cursor_visible(true);
         }
-        false
     }
 
     fn update(&mut self) {
@@ -143,13 +195,15 @@ impl State {
 
         self.input.update(dt);
         let aspect = self.config.width.max(1) as f32 / self.config.height.max(1) as f32;
-        let camera_offset = self.input.offset;
-        let eye = Vec3::new(4.0 + camera_offset.x, 4.0, 6.0 + camera_offset.y);
-        let target = Vec3::new(camera_offset.x, 0.0, camera_offset.y);
-        let view = Mat4::look_at_rh(eye, target, Vec3::Y);
-        let proj = Mat4::perspective_rh(50f32.to_radians(), aspect, 0.1, 100.0);
+        let eye = self.input.position;
+        let forward = self.input.forward();
+        let up = Vec3::Y;
+        let view = Mat4::look_at_rh(eye, eye + forward, up);
+        let far = terrain::WORLD_RADIUS * 20.0;
+        let proj = Mat4::perspective_rh(50f32.to_radians(), aspect, 0.1, far);
         let view_proj = proj * view;
         self.terrain.update_view(&self.queue, view_proj);
+        self.water.update_view(&self.queue, view_proj);
 
         if self.input.take_randomize() {
             self.terrain.randomize(&self.queue, &mut self.rng);
@@ -185,11 +239,19 @@ impl State {
                         store: wgpu::StoreOp::Store,
                     },
                 })],
-                depth_stencil_attachment: None,
+                depth_stencil_attachment: Some(wgpu::RenderPassDepthStencilAttachment {
+                    view: &self.depth.view,
+                    depth_ops: Some(wgpu::Operations {
+                        load: wgpu::LoadOp::Clear(1.0),
+                        store: wgpu::StoreOp::Store,
+                    }),
+                    stencil_ops: None,
+                }),
                 occlusion_query_set: None,
                 timestamp_writes: None,
             });
             self.terrain.draw(&mut pass);
+            self.water.draw(&mut pass);
         }
 
         #[cfg(feature = "ui")]
@@ -336,6 +398,11 @@ fn main() -> Result<(), Box<dyn Error>> {
 
     event_loop.run(move |event, elwt| {
         match event {
+            Event::DeviceEvent { event, .. } => {
+                if let DeviceEvent::MouseMotion { delta } = event {
+                    state.input.handle_mouse_delta(delta);
+                }
+            }
             Event::WindowEvent { event, window_id }
                 if window_id == state.window().id() =>
             {
