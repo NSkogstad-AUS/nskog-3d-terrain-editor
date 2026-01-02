@@ -108,7 +108,7 @@ impl State {
             size,
             clear: Vec3::new(0.05, 0.08, 0.1),
             depth,
-            input: input::InputState::new(terrain::WORLD_RADIUS * 0.12),
+            input: input::InputState::new(1.2),
             last_frame: Instant::now(),
             rng,
             terrain,
@@ -196,9 +196,8 @@ impl State {
         self.input.update(dt);
         let aspect = self.config.width.max(1) as f32 / self.config.height.max(1) as f32;
         let eye = self.input.position;
-        let forward = self.input.forward();
         let up = Vec3::Y;
-        let view = Mat4::look_at_rh(eye, eye + forward, up);
+        let view = Mat4::look_at_rh(eye, Vec3::ZERO, up);
         let far = terrain::WORLD_RADIUS * 20.0;
         let proj = Mat4::perspective_rh(50f32.to_radians(), aspect, 0.1, far);
         let view_proj = proj * view;

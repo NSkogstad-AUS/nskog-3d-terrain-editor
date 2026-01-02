@@ -236,7 +236,7 @@ fn generate_mesh(rng: &mut impl Rng) -> (Vec<Vertex>, Vec<u32>) {
             let i1 = z * GRID + x_next;
             let i2 = (z + 1) * GRID + x;
             let i3 = (z + 1) * GRID + x_next;
-            indices.extend_from_slice(&[i0, i2, i1, i1, i2, i3]);
+            indices.extend_from_slice(&[i0, i1, i2, i1, i3, i2]);
         }
     }
 

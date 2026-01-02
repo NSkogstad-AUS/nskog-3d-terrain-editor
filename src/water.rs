@@ -171,7 +171,7 @@ fn generate_sphere(radius: f32) -> (Vec<Vertex>, Vec<u32>) {
             let i1 = z * WATER_RES + x_next;
             let i2 = (z + 1) * WATER_RES + x;
             let i3 = (z + 1) * WATER_RES + x_next;
-            indices.extend_from_slice(&[i0, i2, i1, i1, i2, i3]);
+            indices.extend_from_slice(&[i0, i1, i2, i1, i3, i2]);
         }
     }
 

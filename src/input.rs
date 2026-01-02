@@ -8,7 +8,8 @@ pub struct InputState {
     pub position: Vec3,
     yaw: f32,
     pitch: f32,
-    base_speed: f32,
+    orbit_radius: f32,
+    orbit_speed: f32,
     shift: bool,
     pub active: bool,
     w: bool,
@@ -31,7 +32,8 @@ impl InputState {
             position,
             yaw,
             pitch,
-            base_speed: speed,
+            orbit_radius: position.length(),
+            orbit_speed: speed,
             shift: false,
             active: true,
             w: false,
@@ -77,29 +79,32 @@ impl InputState {
             return;
         }
 
-        let mut dir = Vec3::ZERO;
+        let mut yaw_delta = 0.0;
+        let mut pitch_delta = 0.0;
         if self.w {
-            dir += self.forward();
+            pitch_delta += 1.0;
         }
         if self.s {
-            dir -= self.forward();
+            pitch_delta -= 1.0;
         }
         if self.a {
-            dir -= self.right();
+            yaw_delta += 1.0;
         }
         if self.d {
-            dir += self.right();
+            yaw_delta -= 1.0;
         }
 
-        if dir != Vec3::ZERO {
+        if yaw_delta != 0.0 || pitch_delta != 0.0 {
             let speed = if self.shift {
-                self.base_speed * 3.0
+                self.orbit_speed * 2.5
             } else {
-                self.base_speed
+                self.orbit_speed
             };
-            let delta = dir.normalize_or_zero() * speed * dt;
-            self.position += delta;
+            self.yaw += yaw_delta * speed * dt;
+            self.pitch = (self.pitch + pitch_delta * speed * dt).clamp(-1.4, 1.4);
         }
+
+        self.position = -self.forward() * self.orbit_radius;
     }
 
     pub fn handle_cursor_move(&mut self, pos: Vec2) {
@@ -126,10 +131,6 @@ impl InputState {
     pub fn forward(&self) -> Vec3 {
         let cp = self.pitch.cos();
         Vec3::new(self.yaw.sin() * cp, self.pitch.sin(), self.yaw.cos() * cp).normalize()
-    }
-
-    fn right(&self) -> Vec3 {
-        self.forward().cross(Vec3::Y).normalize_or_zero()
     }
 
     pub fn take_randomize(&mut self) -> bool {
