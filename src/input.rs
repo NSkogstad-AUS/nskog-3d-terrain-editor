@@ -21,6 +21,7 @@ pub struct InputState {
     s: bool,
     d: bool,
     randomize: bool,
+    toggle_map: bool,
     last_cursor: Option<Vec2>,
     sensitivity: f32,
 }
@@ -45,6 +46,7 @@ impl InputState {
             s: false,
             d: false,
             randomize: false,
+            toggle_map: false,
             last_cursor: None,
             sensitivity: 0.0025,
         }
@@ -72,6 +74,9 @@ impl InputState {
             PhysicalKey::Code(KeyCode::ShiftLeft | KeyCode::ShiftRight) => self.shift = pressed,
             PhysicalKey::Code(KeyCode::KeyR) if pressed => {
                 self.randomize = true;
+            }
+            PhysicalKey::Code(KeyCode::KeyM) if pressed => {
+                self.toggle_map = true;
             }
             _ => return false,
         }
@@ -158,5 +163,11 @@ impl InputState {
         let r = self.randomize;
         self.randomize = false;
         r
+    }
+
+    pub fn take_toggle_map(&mut self) -> bool {
+        let t = self.toggle_map;
+        self.toggle_map = false;
+        t
     }
 }

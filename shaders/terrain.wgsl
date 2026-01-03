@@ -1,5 +1,7 @@
 struct Globals {
     view_proj: mat4x4<f32>,
+    morph: f32,
+    _pad: vec3<f32>,
 };
 
 @group(0) @binding(0)
@@ -16,10 +18,14 @@ fn vs_main(
     @location(0) pos: vec3<f32>,
     @location(1) normal: vec3<f32>,
     @location(2) color: vec3<f32>,
+    @location(3) flat_pos: vec3<f32>,
 ) -> VsOut {
     var out: VsOut;
-    out.position = globals.view_proj * vec4<f32>(pos, 1.0);
-    out.normal = normal;
+    let t = clamp(globals.morph, 0.0, 1.0);
+    let world_pos = pos * (1.0 - t) + flat_pos * t;
+    let world_normal = normalize(normal * (1.0 - t) + vec3<f32>(0.0, 1.0, 0.0) * t);
+    out.position = globals.view_proj * vec4<f32>(world_pos, 1.0);
+    out.normal = world_normal;
     out.color = color;
     return out;
 }

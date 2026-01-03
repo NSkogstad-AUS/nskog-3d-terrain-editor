@@ -15,6 +15,8 @@ use winit::{
     window::{CursorGrabMode, Window, WindowBuilder},
 };
 
+const MAP_TRANSITION_SPEED: f32 = 2.5;
+
 #[cfg(feature = "ui")]
 use egui_wgpu::ScreenDescriptor;
 
@@ -28,6 +30,8 @@ struct State {
     clear: Vec3,
     depth: depth::DepthTexture,
     input: input::InputState,
+    map_blend: f32,
+    map_target: f32,
     last_frame: Instant,
     rng: StdRng,
     terrain: terrain::Terrain,
@@ -109,6 +113,8 @@ impl State {
             clear: Vec3::new(0.05, 0.08, 0.1),
             depth,
             input: input::InputState::new(1.2),
+            map_blend: 0.0,
+            map_target: 0.0,
             last_frame: Instant::now(),
             rng,
             terrain,
@@ -191,12 +197,23 @@ impl State {
         }
     }
 
+    fn toggle_map(&mut self) {
+        self.map_target = if self.map_target < 0.5 { 1.0 } else { 0.0 };
+    }
+
     fn update(&mut self) {
         let now = Instant::now();
         let dt = (now - self.last_frame).as_secs_f32();
         self.last_frame = now;
 
         self.input.update(dt);
+        if self.input.take_toggle_map() {
+            self.toggle_map();
+        }
+
+        let blend_step = 1.0 - (-MAP_TRANSITION_SPEED * dt).exp();
+        self.map_blend += (self.map_target - self.map_blend) * blend_step;
+        self.map_blend = self.map_blend.clamp(0.0, 1.0);
         let aspect = self.config.width.max(1) as f32 / self.config.height.max(1) as f32;
         let eye = self.input.position;
         let up = Vec3::Y;
@@ -204,8 +221,8 @@ impl State {
         let far = terrain::WORLD_RADIUS * 20.0;
         let proj = Mat4::perspective_rh(50f32.to_radians(), aspect, 0.1, far);
         let view_proj = proj * view;
-        self.terrain.update_view(&self.queue, view_proj);
-        self.water.update_view(&self.queue, view_proj);
+        self.terrain.update_view(&self.queue, view_proj, self.map_blend);
+        self.water.update_view(&self.queue, view_proj, self.map_blend);
 
         if self.input.take_randomize() {
             self.terrain.randomize(&self.queue, &mut self.rng);
@@ -264,6 +281,7 @@ impl State {
             &view,
             &mut encoder,
             &self.config,
+            self.map_target,
         );
 
         #[cfg(feature = "ui")]
@@ -273,6 +291,9 @@ impl State {
             self.queue.submit(submits);
             if ui_frame.randomize {
                 self.terrain.randomize(&self.queue, &mut self.rng);
+            }
+            if ui_frame.toggle_map {
+                self.toggle_map();
             }
         }
         #[cfg(not(feature = "ui"))]
@@ -294,6 +315,7 @@ struct Gui {
 struct UiFrame {
     commands: Vec<wgpu::CommandBuffer>,
     randomize: bool,
+    toggle_map: bool,
 }
 
 #[cfg(feature = "ui")]
@@ -327,14 +349,24 @@ impl Gui {
         view: &wgpu::TextureView,
         encoder: &mut wgpu::CommandEncoder,
         surface_config: &wgpu::SurfaceConfiguration,
+        map_target: f32,
     ) -> UiFrame {
         let raw_input = self.state.take_egui_input(window);
         let mut randomize = false;
+        let mut toggle_map = false;
         let full_output = self.ctx.run(raw_input, |ctx| {
             egui::Window::new("Overlay")
                 .resizable(false)
                 .show(ctx, |ui| {
                     ui.label("Procedural terrain");
+                    let label = if map_target < 0.5 {
+                        "Flatten Map"
+                    } else {
+                        "Globe View"
+                    };
+                    if ui.button(label).clicked() {
+                        toggle_map = true;
+                    }
                     if ui.button("Randomise").clicked() {
                         randomize = true;
                     }
@@ -390,6 +422,7 @@ impl Gui {
         UiFrame {
             commands: user_cmd_bufs,
             randomize,
+            toggle_map,
         }
     }
 }

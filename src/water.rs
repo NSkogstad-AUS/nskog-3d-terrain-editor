@@ -4,16 +4,22 @@ use wgpu::util::DeviceExt;
 
 use crate::terrain::WORLD_RADIUS;
 
+const MAP_WIDTH: f32 = WORLD_RADIUS * std::f32::consts::TAU;
+const MAP_HEIGHT: f32 = WORLD_RADIUS * std::f32::consts::PI;
+
 #[repr(C)]
 #[derive(Copy, Clone, bytemuck::Pod, bytemuck::Zeroable)]
 struct Vertex {
     pos: [f32; 3],
+    flat_pos: [f32; 3],
 }
 
 #[repr(C)]
 #[derive(Copy, Clone, bytemuck::Pod, bytemuck::Zeroable)]
 struct Globals {
     view_proj: [[f32; 4]; 4],
+    morph: f32,
+    _pad: [f32; 3],
 }
 
 pub struct Water {
@@ -27,7 +33,7 @@ pub struct Water {
 
 impl Water {
     pub fn new(device: &wgpu::Device, format: wgpu::TextureFormat, height: f32) -> Self {
-        let (vertices, indices) = generate_sphere(WORLD_RADIUS + height);
+        let (vertices, indices) = generate_sphere(WORLD_RADIUS + height, height);
 
         let vertex_buffer = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
             label: Some("water vertices"),
@@ -45,6 +51,8 @@ impl Water {
             label: Some("water globals"),
             contents: bytemuck::bytes_of(&Globals {
                 view_proj: Mat4::IDENTITY.to_cols_array_2d(),
+                morph: 0.0,
+                _pad: [0.0; 3],
             }),
             usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
         });
@@ -92,7 +100,7 @@ impl Water {
                 buffers: &[wgpu::VertexBufferLayout {
                     array_stride: std::mem::size_of::<Vertex>() as u64,
                     step_mode: wgpu::VertexStepMode::Vertex,
-                    attributes: &wgpu::vertex_attr_array![0 => Float32x3],
+                    attributes: &wgpu::vertex_attr_array![0 => Float32x3, 1 => Float32x3],
                 }],
             },
             fragment: Some(wgpu::FragmentState {
@@ -130,9 +138,11 @@ impl Water {
         }
     }
 
-    pub fn update_view(&self, queue: &wgpu::Queue, view_proj: Mat4) {
+    pub fn update_view(&self, queue: &wgpu::Queue, view_proj: Mat4, morph: f32) {
         let globals = Globals {
             view_proj: view_proj.to_cols_array_2d(),
+            morph: morph.clamp(0.0, 1.0),
+            _pad: [0.0; 3],
         };
         queue.write_buffer(&self.uniform, 0, bytemuck::bytes_of(&globals));
     }
@@ -147,30 +157,35 @@ impl Water {
 }
 
 const WATER_RES: u32 = 128;
+const WATER_LON: u32 = WATER_RES + 1;
 
-fn generate_sphere(radius: f32) -> (Vec<Vertex>, Vec<u32>) {
-    let mut vertices = Vec::with_capacity((WATER_RES * WATER_RES) as usize);
+fn generate_sphere(radius: f32, height: f32) -> (Vec<Vertex>, Vec<u32>) {
+    let mut vertices = Vec::with_capacity((WATER_RES * WATER_LON) as usize);
     for z in 0..WATER_RES {
-        let lat = z as f32 / (WATER_RES - 1) as f32 * std::f32::consts::PI;
+        let v = z as f32 / (WATER_RES - 1) as f32;
+        let lat = v * std::f32::consts::PI;
         let sin_lat = lat.sin();
         let cos_lat = lat.cos();
-        for x in 0..WATER_RES {
-            let lon = x as f32 / WATER_RES as f32 * std::f32::consts::TAU;
+        for x in 0..WATER_LON {
+            let u = x as f32 / (WATER_LON - 1) as f32;
+            let lon = u * std::f32::consts::TAU;
             let dir = Vec3::new(lon.cos() * sin_lat, cos_lat, lon.sin() * sin_lat);
+            let flat_x = (u - 0.5) * MAP_WIDTH;
+            let flat_z = (0.5 - v) * MAP_HEIGHT;
             vertices.push(Vertex {
                 pos: (dir * radius).into(),
+                flat_pos: [flat_x, height, flat_z],
             });
         }
     }
 
-    let mut indices = Vec::with_capacity((WATER_RES * (WATER_RES - 1) * 6) as usize);
+    let mut indices = Vec::with_capacity(((WATER_RES - 1) * (WATER_LON - 1) * 6) as usize);
     for z in 0..WATER_RES - 1 {
-        for x in 0..WATER_RES {
-            let x_next = (x + 1) % WATER_RES;
-            let i0 = z * WATER_RES + x;
-            let i1 = z * WATER_RES + x_next;
-            let i2 = (z + 1) * WATER_RES + x;
-            let i3 = (z + 1) * WATER_RES + x_next;
+        for x in 0..WATER_LON - 1 {
+            let i0 = z * WATER_LON + x;
+            let i1 = i0 + 1;
+            let i2 = i0 + WATER_LON;
+            let i3 = i2 + 1;
             indices.extend_from_slice(&[i0, i1, i2, i1, i3, i2]);
         }
     }

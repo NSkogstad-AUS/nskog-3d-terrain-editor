@@ -7,6 +7,10 @@ pub const GRID: u32 = 256;
 pub const WORLD_RADIUS: f32 = 100.0;
 pub const HEIGHT_AMPLITUDE: f32 = 10.0;
 pub const WATER_LEVEL: f32 = 0.0;
+const LON_POINTS: u32 = GRID + 1;
+const LAT_POINTS: u32 = GRID;
+const MAP_WIDTH: f32 = WORLD_RADIUS * std::f32::consts::TAU;
+const MAP_HEIGHT: f32 = WORLD_RADIUS * std::f32::consts::PI;
 const CONTINENT_FREQ: f32 = 1.0;
 const HILL_FREQ: f32 = 8.2;
 const MOUNTAIN_FREQ: f32 = 10.2;
@@ -21,11 +25,16 @@ struct Vertex {
     pos: [f32; 3],
     normal: [f32; 3],
     color: [f32; 3],
+    flat_pos: [f32; 3],
 }
 
 impl Vertex {
-    const ATTRIBS: [wgpu::VertexAttribute; 3] =
-        wgpu::vertex_attr_array![0 => Float32x3, 1 => Float32x3, 2 => Float32x3];
+    const ATTRIBS: [wgpu::VertexAttribute; 4] = wgpu::vertex_attr_array![
+        0 => Float32x3,
+        1 => Float32x3,
+        2 => Float32x3,
+        3 => Float32x3
+    ];
 
     fn layout<'a>() -> wgpu::VertexBufferLayout<'a> {
         wgpu::VertexBufferLayout {
@@ -40,6 +49,8 @@ impl Vertex {
 #[derive(Copy, Clone, bytemuck::Pod, bytemuck::Zeroable)]
 struct Globals {
     view_proj: [[f32; 4]; 4],
+    morph: f32,
+    _pad: [f32; 3],
 }
 
 pub struct Terrain {
@@ -75,6 +86,8 @@ impl Terrain {
             label: Some("terrain globals"),
             contents: bytemuck::bytes_of(&Globals {
                 view_proj: Mat4::IDENTITY.to_cols_array_2d(),
+                morph: 0.0,
+                _pad: [0.0; 3],
             }),
             usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
         });
@@ -156,9 +169,11 @@ impl Terrain {
         }
     }
 
-    pub fn update_view(&self, queue: &wgpu::Queue, view_proj: Mat4) {
+    pub fn update_view(&self, queue: &wgpu::Queue, view_proj: Mat4, morph: f32) {
         let globals = Globals {
             view_proj: view_proj.to_cols_array_2d(),
+            morph: morph.clamp(0.0, 1.0),
+            _pad: [0.0; 3],
         };
         queue.write_buffer(&self.uniform, 0, bytemuck::bytes_of(&globals));
     }
@@ -185,15 +200,18 @@ fn generate_mesh(rng: &mut impl Rng) -> (Vec<Vertex>, Vec<u32>) {
     let moisture_seed = rng.gen::<u32>();
     let warp_seed = rng.gen::<u32>();
 
-    let mut heights = vec![0.0f32; (GRID * GRID) as usize];
-    let mut moisture_map = vec![0.0f32; (GRID * GRID) as usize];
-    let mut positions = vec![Vec3::ZERO; (GRID * GRID) as usize];
-    for z in 0..GRID {
-        let lat = z as f32 / (GRID - 1) as f32 * std::f32::consts::PI;
+    let mut heights = vec![0.0f32; (LAT_POINTS * LON_POINTS) as usize];
+    let mut moisture_map = vec![0.0f32; (LAT_POINTS * LON_POINTS) as usize];
+    let mut positions = vec![Vec3::ZERO; (LAT_POINTS * LON_POINTS) as usize];
+    let mut flat_positions = vec![Vec3::ZERO; (LAT_POINTS * LON_POINTS) as usize];
+    for z in 0..LAT_POINTS {
+        let v = z as f32 / (LAT_POINTS - 1) as f32;
+        let lat = v * std::f32::consts::PI;
         let sin_lat = lat.sin();
         let cos_lat = lat.cos();
-        for x in 0..GRID {
-            let lon = x as f32 / GRID as f32 * std::f32::consts::TAU;
+        for x in 0..LON_POINTS {
+            let u = x as f32 / (LON_POINTS - 1) as f32;
+            let lon = u * std::f32::consts::TAU;
             let dir = Vec3::new(lon.cos() * sin_lat, cos_lat, lon.sin() * sin_lat);
             let (height, moisture) = height_for_dir(
                 dir,
@@ -204,26 +222,32 @@ fn generate_mesh(rng: &mut impl Rng) -> (Vec<Vertex>, Vec<u32>) {
                 moisture_seed,
                 warp_seed,
             );
-            let idx = (z * GRID + x) as usize;
+            let idx = (z * LON_POINTS + x) as usize;
             heights[idx] = height;
             moisture_map[idx] = moisture;
             positions[idx] = dir * (WORLD_RADIUS + height);
+            let flat_x = (u - 0.5) * MAP_WIDTH;
+            let flat_z = (0.5 - v) * MAP_HEIGHT;
+            flat_positions[idx] = Vec3::new(flat_x, height, flat_z);
         }
     }
 
     let mut normals = vec![Vec3::ZERO; positions.len()];
-    for z in 0..GRID {
-        for x in 0..GRID {
-            let idx = (z * GRID + x) as usize;
-            if z == 0 || z == GRID - 1 {
+    let lon_last = LON_POINTS - 1;
+    for z in 0..LAT_POINTS {
+        for x in 0..LON_POINTS {
+            let idx = (z * LON_POINTS + x) as usize;
+            if z == 0 || z == LAT_POINTS - 1 {
                 normals[idx] = positions[idx].normalize_or_zero();
                 continue;
             }
 
-            let left = positions[(z * GRID + (x + GRID - 1) % GRID) as usize];
-            let right = positions[(z * GRID + (x + 1) % GRID) as usize];
-            let down = positions[((z - 1) * GRID + x) as usize];
-            let up = positions[((z + 1) * GRID + x) as usize];
+            let x_left = if x == 0 { lon_last - 1 } else { x - 1 };
+            let x_right = if x == lon_last { 1 } else { x + 1 };
+            let left = positions[(z * LON_POINTS + x_left) as usize];
+            let right = positions[(z * LON_POINTS + x_right) as usize];
+            let down = positions[((z - 1) * LON_POINTS + x) as usize];
+            let up = positions[((z + 1) * LON_POINTS + x) as usize];
             let tangent = right - left;
             let bitangent = up - down;
             let normal = tangent.cross(bitangent).normalize_or_zero();
@@ -235,7 +259,7 @@ fn generate_mesh(rng: &mut impl Rng) -> (Vec<Vertex>, Vec<u32>) {
         }
     }
 
-    let mut vertices = Vec::with_capacity((GRID * GRID) as usize);
+    let mut vertices = Vec::with_capacity((LAT_POINTS * LON_POINTS) as usize);
     for idx in 0..positions.len() {
         let height = heights[idx];
         let color = color_from_height(height, positions[idx].normalize_or_zero(), moisture_map[idx]);
@@ -243,17 +267,17 @@ fn generate_mesh(rng: &mut impl Rng) -> (Vec<Vertex>, Vec<u32>) {
             pos: positions[idx].into(),
             normal: normals[idx].into(),
             color,
+            flat_pos: flat_positions[idx].into(),
         });
     }
 
-    let mut indices = Vec::with_capacity((GRID * (GRID - 1) * 6) as usize);
-    for z in 0..GRID - 1 {
-        for x in 0..GRID {
-            let x_next = (x + 1) % GRID;
-            let i0 = z * GRID + x;
-            let i1 = z * GRID + x_next;
-            let i2 = (z + 1) * GRID + x;
-            let i3 = (z + 1) * GRID + x_next;
+    let mut indices = Vec::with_capacity(((LAT_POINTS - 1) * (LON_POINTS - 1) * 6) as usize);
+    for z in 0..LAT_POINTS - 1 {
+        for x in 0..LON_POINTS - 1 {
+            let i0 = z * LON_POINTS + x;
+            let i1 = i0 + 1;
+            let i2 = i0 + LON_POINTS;
+            let i3 = i2 + 1;
             indices.extend_from_slice(&[i0, i1, i2, i1, i3, i2]);
         }
     }
