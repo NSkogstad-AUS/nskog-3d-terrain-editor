@@ -32,6 +32,7 @@ struct State {
     input: input::InputState,
     map_blend: f32,
     map_target: f32,
+    map_rotation: f32,
     last_frame: Instant,
     rng: StdRng,
     terrain: terrain::Terrain,
@@ -115,6 +116,7 @@ impl State {
             input: input::InputState::new(1.2),
             map_blend: 0.0,
             map_target: 0.0,
+            map_rotation: 0.0,
             last_frame: Instant::now(),
             rng,
             terrain,
@@ -198,7 +200,14 @@ impl State {
     }
 
     fn toggle_map(&mut self) {
-        self.map_target = if self.map_target < 0.5 { 1.0 } else { 0.0 };
+        if self.map_target < 0.5 {
+            let dir = self.input.position.normalize_or_zero();
+            let lon_center = dir.z.atan2(dir.x);
+            self.map_rotation = std::f32::consts::PI - lon_center;
+            self.map_target = 1.0;
+        } else {
+            self.map_target = 0.0;
+        }
     }
 
     fn update(&mut self) {
@@ -216,13 +225,17 @@ impl State {
         self.map_blend = self.map_blend.clamp(0.0, 1.0);
         let aspect = self.config.width.max(1) as f32 / self.config.height.max(1) as f32;
         let eye = self.input.position;
+        let orbit = eye.length().max(1.0);
         let up = Vec3::Y;
         let view = Mat4::look_at_rh(eye, Vec3::ZERO, up);
-        let far = terrain::WORLD_RADIUS * 20.0;
-        let proj = Mat4::perspective_rh(50f32.to_radians(), aspect, 0.1, far);
+        let near = 1.0;
+        let far = (orbit + terrain::WORLD_RADIUS * 4.0).max(terrain::WORLD_RADIUS * 6.0);
+        let proj = Mat4::perspective_rh(50f32.to_radians(), aspect, near, far);
         let view_proj = proj * view;
-        self.terrain.update_view(&self.queue, view_proj, self.map_blend);
-        self.water.update_view(&self.queue, view_proj, self.map_blend);
+        self.terrain
+            .update_view(&self.queue, view_proj, self.map_blend, self.map_rotation);
+        self.water
+            .update_view(&self.queue, view_proj, self.map_blend, self.map_rotation);
 
         if self.input.take_randomize() {
             self.terrain.randomize(&self.queue, &mut self.rng);

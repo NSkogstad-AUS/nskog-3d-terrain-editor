@@ -6,6 +6,8 @@ use crate::terrain::WORLD_RADIUS;
 
 const MAP_WIDTH: f32 = WORLD_RADIUS * std::f32::consts::TAU;
 const MAP_HEIGHT: f32 = WORLD_RADIUS * std::f32::consts::PI;
+const FLAT_WATER_OFFSET: f32 = 1.2;
+const GLOBE_WATER_OFFSET: f32 = 0.6;
 
 #[repr(C)]
 #[derive(Copy, Clone, bytemuck::Pod, bytemuck::Zeroable)]
@@ -32,7 +34,7 @@ pub struct Water {
 
 impl Water {
     pub fn new(device: &wgpu::Device, format: wgpu::TextureFormat, height: f32) -> Self {
-        let (vertices, indices) = generate_sphere(WORLD_RADIUS + height, height);
+        let (vertices, indices) = generate_sphere(WORLD_RADIUS + height - GLOBE_WATER_OFFSET, height);
 
         let vertex_buffer = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
             label: Some("water vertices"),
@@ -136,10 +138,21 @@ impl Water {
         }
     }
 
-    pub fn update_view(&self, queue: &wgpu::Queue, view_proj: Mat4, morph: f32) {
+    pub fn update_view(
+        &self,
+        queue: &wgpu::Queue,
+        view_proj: Mat4,
+        morph: f32,
+        rotation: f32,
+    ) {
         let globals = Globals {
             view_proj: view_proj.to_cols_array_2d(),
-            morph: [morph.clamp(0.0, 1.0), 0.0, 0.0, 0.0],
+            morph: [
+                morph.clamp(0.0, 1.0),
+                rotation,
+                MAP_WIDTH,
+                MAP_HEIGHT,
+            ],
         };
         queue.write_buffer(&self.uniform, 0, bytemuck::bytes_of(&globals));
     }
@@ -167,11 +180,9 @@ fn generate_sphere(radius: f32, height: f32) -> (Vec<Vertex>, Vec<u32>) {
             let u = x as f32 / (WATER_LON - 1) as f32;
             let lon = u * std::f32::consts::TAU;
             let dir = Vec3::new(lon.cos() * sin_lat, cos_lat, lon.sin() * sin_lat);
-            let flat_x = (u - 0.5) * MAP_WIDTH;
-            let flat_z = (0.5 - v) * MAP_HEIGHT;
             vertices.push(Vertex {
                 pos: (dir * radius).into(),
-                flat_pos: [flat_x, height, flat_z],
+                flat_pos: [u, v, height - FLAT_WATER_OFFSET],
             });
         }
     }

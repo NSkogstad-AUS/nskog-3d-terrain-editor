@@ -3,6 +3,8 @@ struct Globals {
     morph: vec4<f32>,
 };
 
+const INV_TAU: f32 = 0.15915494;
+
 @group(0) @binding(0)
 var<uniform> globals: Globals;
 
@@ -17,7 +19,20 @@ fn vs_main(
 ) -> VsOut {
     var out: VsOut;
     let t = clamp(globals.morph.x, 0.0, 1.0);
-    let world_pos = pos * (1.0 - t) + flat_pos * t;
+    let rot = globals.morph.y;
+    let rot_blend = rot * t;
+    let c = cos(rot_blend);
+    let s = sin(rot_blend);
+    let globe_pos = vec3<f32>(pos.x * c + pos.z * s, pos.y, -pos.x * s + pos.z * c);
+    let map_width = globals.morph.z;
+    let map_height = globals.morph.w;
+    let u = fract(flat_pos.x + rot * INV_TAU);
+    let v = clamp(flat_pos.y, 0.0, 1.0);
+    let height = flat_pos.z;
+    let flat_x = (u - 0.5) * map_width;
+    let flat_z = (0.5 - v) * map_height;
+    let flat_world = vec3<f32>(flat_x, height, flat_z);
+    let world_pos = globe_pos * (1.0 - t) + flat_world * t;
     out.position = globals.view_proj * vec4<f32>(world_pos, 1.0);
     return out;
 }

@@ -17,7 +17,7 @@ const MOUNTAIN_FREQ: f32 = 10.2;
 const DETAIL_FREQ: f32 = 19.0;
 const WARP_FREQ: f32 = 0.75;
 const MOISTURE_FREQ: f32 = 0.8;
-const SEA_THRESHOLD: f32 = 0.15;
+const SEA_THRESHOLD: f32 = 0.3;
 
 #[repr(C)]
 #[derive(Copy, Clone, bytemuck::Pod, bytemuck::Zeroable)]
@@ -167,10 +167,21 @@ impl Terrain {
         }
     }
 
-    pub fn update_view(&self, queue: &wgpu::Queue, view_proj: Mat4, morph: f32) {
+    pub fn update_view(
+        &self,
+        queue: &wgpu::Queue,
+        view_proj: Mat4,
+        morph: f32,
+        rotation: f32,
+    ) {
         let globals = Globals {
             view_proj: view_proj.to_cols_array_2d(),
-            morph: [morph.clamp(0.0, 1.0), 0.0, 0.0, 0.0],
+            morph: [
+                morph.clamp(0.0, 1.0),
+                rotation,
+                MAP_WIDTH,
+                MAP_HEIGHT,
+            ],
         };
         queue.write_buffer(&self.uniform, 0, bytemuck::bytes_of(&globals));
     }
@@ -223,9 +234,7 @@ fn generate_mesh(rng: &mut impl Rng) -> (Vec<Vertex>, Vec<u32>) {
             heights[idx] = height;
             moisture_map[idx] = moisture;
             positions[idx] = dir * (WORLD_RADIUS + height);
-            let flat_x = (u - 0.5) * MAP_WIDTH;
-            let flat_z = (0.5 - v) * MAP_HEIGHT;
-            flat_positions[idx] = Vec3::new(flat_x, height, flat_z);
+            flat_positions[idx] = Vec3::new(u, v, height);
         }
     }
 
@@ -327,13 +336,13 @@ fn color_from_height(height: f32, dir: Vec3, moisture: f32) -> [f32; 3] {
     if h < -0.45 {
         return [0.02, 0.05, 0.12];
     }
-    if h < -0.18 {
+    if h < -0.2 {
         return [0.03, 0.1, 0.22];
     }
-    if h < -0.05 {
+    if h < -0.02 {
         return [0.06, 0.22, 0.35];
     }
-    if h < 0.03 {
+    if h < 0.04 {
         return [0.78, 0.72, 0.54];
     }
 
