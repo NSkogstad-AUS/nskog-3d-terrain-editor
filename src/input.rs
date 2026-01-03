@@ -1,8 +1,12 @@
 use glam::{Vec2, Vec3};
-use winit::event::{ElementState, KeyEvent};
+use winit::event::{ElementState, KeyEvent, MouseScrollDelta};
 use winit::keyboard::{KeyCode, PhysicalKey};
 
-use crate::terrain::WORLD_RADIUS;
+use crate::terrain::{HEIGHT_AMPLITUDE, WORLD_RADIUS};
+
+const MIN_ORBIT_FACTOR: f32 = 1.2;
+const MAX_ORBIT_FACTOR: f32 = 8.0;
+const ZOOM_SENSITIVITY: f32 = 0.2;
 
 pub struct InputState {
     pub position: Vec3,
@@ -105,6 +109,23 @@ impl InputState {
         }
 
         self.position = -self.forward() * self.orbit_radius;
+    }
+
+    pub fn handle_scroll(&mut self, delta: &MouseScrollDelta) -> bool {
+        let scroll = match delta {
+            MouseScrollDelta::LineDelta(_, y) => *y,
+            MouseScrollDelta::PixelDelta(pos) => pos.y as f32 * 0.02,
+        };
+        if scroll == 0.0 {
+            return false;
+        }
+
+        let min_orbit = WORLD_RADIUS + HEIGHT_AMPLITUDE * MIN_ORBIT_FACTOR;
+        let max_orbit = WORLD_RADIUS * MAX_ORBIT_FACTOR;
+        let factor = (1.0 - scroll * ZOOM_SENSITIVITY).clamp(0.5, 1.5);
+        self.orbit_radius = (self.orbit_radius * factor).clamp(min_orbit, max_orbit);
+        self.position = -self.forward() * self.orbit_radius;
+        true
     }
 
     pub fn handle_cursor_move(&mut self, pos: Vec2) {

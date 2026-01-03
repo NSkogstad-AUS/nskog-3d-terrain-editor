@@ -143,6 +143,9 @@ impl State {
                     handled = true;
                 }
             }
+            WindowEvent::MouseWheel { delta, .. } => {
+                handled |= self.input.handle_scroll(delta);
+            }
             WindowEvent::CursorMoved { position, .. } => {
                 let pos = glam::Vec2::new(position.x as f32, position.y as f32);
                 self.input.handle_cursor_move(pos);
