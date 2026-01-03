@@ -18,6 +18,9 @@ const DETAIL_FREQ: f32 = 19.0;
 const WARP_FREQ: f32 = 0.75;
 const MOISTURE_FREQ: f32 = 0.22;
 const SEA_THRESHOLD: f32 = 0.3;
+const BEACH_MAX_HEIGHT: f32 = 0.005;
+const DESERT_MOISTURE_MAX: f32 = 0.1;
+const SEMI_ARID_MOISTURE_MAX: f32 = 0.1;
 
 #[repr(C)]
 #[derive(Copy, Clone, bytemuck::Pod, bytemuck::Zeroable)]
@@ -342,7 +345,7 @@ fn color_from_height(height: f32, dir: Vec3, moisture: f32) -> [f32; 3] {
     if h < -0.02 {
         return [0.06, 0.22, 0.35];
     }
-    if h < 0.04 {
+    if h < BEACH_MAX_HEIGHT {
         return [0.78, 0.72, 0.54];
     }
 
@@ -358,9 +361,9 @@ fn color_from_height(height: f32, dir: Vec3, moisture: f32) -> [f32; 3] {
         return [0.62, 0.66, 0.6];
     }
 
-    if moisture < 0.22 {
+    if moisture < DESERT_MOISTURE_MAX {
         [0.8, 0.72, 0.45]
-    } else if moisture < 0.5 {
+    } else if moisture < SEMI_ARID_MOISTURE_MAX {
         [0.22, 0.56, 0.28]
     } else {
         [0.08, 0.43, 0.22]
