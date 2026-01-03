@@ -4,16 +4,16 @@ use std::num::NonZeroU64;
 use wgpu::util::DeviceExt;
 
 pub const GRID: u32 = 256;
-pub const WORLD_RADIUS: f32 = 80.0;
-pub const HEIGHT_AMPLITUDE: f32 = 11.0;
+pub const WORLD_RADIUS: f32 = 100.0;
+pub const HEIGHT_AMPLITUDE: f32 = 10.0;
 pub const WATER_LEVEL: f32 = 0.0;
-const CONTINENT_FREQ: f32 = 0.55;
-const HILL_FREQ: f32 = 2.1;
-const MOUNTAIN_FREQ: f32 = 4.2;
-const DETAIL_FREQ: f32 = 11.0;
+const CONTINENT_FREQ: f32 = 1.0;
+const HILL_FREQ: f32 = 8.2;
+const MOUNTAIN_FREQ: f32 = 10.2;
+const DETAIL_FREQ: f32 = 19.0;
 const WARP_FREQ: f32 = 0.75;
-const MOISTURE_FREQ: f32 = 1.35;
-const SEA_THRESHOLD: f32 = 0.1;
+const MOISTURE_FREQ: f32 = 0.8;
+const SEA_THRESHOLD: f32 = 0.15;
 
 #[repr(C)]
 #[derive(Copy, Clone, bytemuck::Pod, bytemuck::Zeroable)]
