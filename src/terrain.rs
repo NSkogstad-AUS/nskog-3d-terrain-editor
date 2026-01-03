@@ -49,8 +49,7 @@ impl Vertex {
 #[derive(Copy, Clone, bytemuck::Pod, bytemuck::Zeroable)]
 struct Globals {
     view_proj: [[f32; 4]; 4],
-    morph: f32,
-    _pad: [f32; 3],
+    morph: [f32; 4],
 }
 
 pub struct Terrain {
@@ -86,8 +85,7 @@ impl Terrain {
             label: Some("terrain globals"),
             contents: bytemuck::bytes_of(&Globals {
                 view_proj: Mat4::IDENTITY.to_cols_array_2d(),
-                morph: 0.0,
-                _pad: [0.0; 3],
+                morph: [0.0; 4],
             }),
             usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
         });
@@ -172,8 +170,7 @@ impl Terrain {
     pub fn update_view(&self, queue: &wgpu::Queue, view_proj: Mat4, morph: f32) {
         let globals = Globals {
             view_proj: view_proj.to_cols_array_2d(),
-            morph: morph.clamp(0.0, 1.0),
-            _pad: [0.0; 3],
+            morph: [morph.clamp(0.0, 1.0), 0.0, 0.0, 0.0],
         };
         queue.write_buffer(&self.uniform, 0, bytemuck::bytes_of(&globals));
     }

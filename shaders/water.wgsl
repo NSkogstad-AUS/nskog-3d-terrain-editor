@@ -1,7 +1,6 @@
 struct Globals {
     view_proj: mat4x4<f32>,
-    morph: f32,
-    _pad: vec3<f32>,
+    morph: vec4<f32>,
 };
 
 @group(0) @binding(0)
@@ -17,7 +16,7 @@ fn vs_main(
     @location(1) flat_pos: vec3<f32>,
 ) -> VsOut {
     var out: VsOut;
-    let t = clamp(globals.morph, 0.0, 1.0);
+    let t = clamp(globals.morph.x, 0.0, 1.0);
     let world_pos = pos * (1.0 - t) + flat_pos * t;
     out.position = globals.view_proj * vec4<f32>(world_pos, 1.0);
     return out;
