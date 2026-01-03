@@ -16,7 +16,7 @@ const HILL_FREQ: f32 = 8.2;
 const MOUNTAIN_FREQ: f32 = 10.2;
 const DETAIL_FREQ: f32 = 19.0;
 const WARP_FREQ: f32 = 0.75;
-const MOISTURE_FREQ: f32 = 0.8;
+const MOISTURE_FREQ: f32 = 0.22;
 const SEA_THRESHOLD: f32 = 0.3;
 
 #[repr(C)]
