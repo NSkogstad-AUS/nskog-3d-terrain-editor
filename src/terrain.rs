@@ -5,11 +5,15 @@ use wgpu::util::DeviceExt;
 
 pub const GRID: u32 = 256;
 pub const WORLD_RADIUS: f32 = 80.0;
-pub const HEIGHT_AMPLITUDE: f32 = 10.0;
+pub const HEIGHT_AMPLITUDE: f32 = 11.0;
 pub const WATER_LEVEL: f32 = 0.0;
-const CONTINENT_FREQ: f32 = 0.8;
-const DETAIL_FREQ: f32 = 5.5;
-const SEA_THRESHOLD: f32 = 0.18;
+const CONTINENT_FREQ: f32 = 0.55;
+const HILL_FREQ: f32 = 2.1;
+const MOUNTAIN_FREQ: f32 = 4.2;
+const DETAIL_FREQ: f32 = 11.0;
+const WARP_FREQ: f32 = 0.75;
+const MOISTURE_FREQ: f32 = 1.35;
+const SEA_THRESHOLD: f32 = 0.1;
 
 #[repr(C)]
 #[derive(Copy, Clone, bytemuck::Pod, bytemuck::Zeroable)]
@@ -175,9 +179,14 @@ impl Terrain {
 
 fn generate_mesh(rng: &mut impl Rng) -> (Vec<Vertex>, Vec<u32>) {
     let continent_seed = rng.gen::<u32>();
+    let hill_seed = rng.gen::<u32>();
+    let mountain_seed = rng.gen::<u32>();
     let detail_seed = rng.gen::<u32>();
+    let moisture_seed = rng.gen::<u32>();
+    let warp_seed = rng.gen::<u32>();
 
     let mut heights = vec![0.0f32; (GRID * GRID) as usize];
+    let mut moisture_map = vec![0.0f32; (GRID * GRID) as usize];
     let mut positions = vec![Vec3::ZERO; (GRID * GRID) as usize];
     for z in 0..GRID {
         let lat = z as f32 / (GRID - 1) as f32 * std::f32::consts::PI;
@@ -186,9 +195,18 @@ fn generate_mesh(rng: &mut impl Rng) -> (Vec<Vertex>, Vec<u32>) {
         for x in 0..GRID {
             let lon = x as f32 / GRID as f32 * std::f32::consts::TAU;
             let dir = Vec3::new(lon.cos() * sin_lat, cos_lat, lon.sin() * sin_lat);
-            let height = height_for_dir(dir, continent_seed, detail_seed);
+            let (height, moisture) = height_for_dir(
+                dir,
+                continent_seed,
+                hill_seed,
+                mountain_seed,
+                detail_seed,
+                moisture_seed,
+                warp_seed,
+            );
             let idx = (z * GRID + x) as usize;
             heights[idx] = height;
+            moisture_map[idx] = moisture;
             positions[idx] = dir * (WORLD_RADIUS + height);
         }
     }
@@ -220,7 +238,7 @@ fn generate_mesh(rng: &mut impl Rng) -> (Vec<Vertex>, Vec<u32>) {
     let mut vertices = Vec::with_capacity((GRID * GRID) as usize);
     for idx in 0..positions.len() {
         let height = heights[idx];
-        let color = color_from_height(height);
+        let color = color_from_height(height, positions[idx].normalize_or_zero(), moisture_map[idx]);
         vertices.push(Vertex {
             pos: positions[idx].into(),
             normal: normals[idx].into(),
@@ -243,46 +261,89 @@ fn generate_mesh(rng: &mut impl Rng) -> (Vec<Vertex>, Vec<u32>) {
     (vertices, indices)
 }
 
-fn height_for_dir(dir: Vec3, continent_seed: u32, detail_seed: u32) -> f32 {
-    let continent = fbm(dir * CONTINENT_FREQ, continent_seed, 4, 2.05, 0.5);
+fn height_for_dir(
+    dir: Vec3,
+    continent_seed: u32,
+    hill_seed: u32,
+    mountain_seed: u32,
+    detail_seed: u32,
+    moisture_seed: u32,
+    warp_seed: u32,
+) -> (f32, f32) {
+    let warped = (dir + warp_dir(dir, warp_seed)).normalize_or_zero();
+    let continent = fbm(warped * CONTINENT_FREQ, continent_seed, 5, 2.05, 0.5) * 0.85
+        + fbm(warped * (CONTINENT_FREQ * 0.5), continent_seed ^ 0x9e37, 3, 2.2, 0.5) * 0.15;
     let base = continent - SEA_THRESHOLD;
     let land_mask = smoothstep(0.0, 0.2, base);
-    let detail = fbm(dir * DETAIL_FREQ, detail_seed, 5, 2.2, 0.5);
+    let hills = remap01(fbm(warped * HILL_FREQ, hill_seed, 4, 2.1, 0.5));
+    let ridges = ridged_fbm(warped * MOUNTAIN_FREQ, mountain_seed, 4, 2.0, 0.5);
+    let detail = fbm(warped * DETAIL_FREQ, detail_seed, 3, 2.4, 0.55);
+    let moisture = remap01(
+        fbm(warped * MOISTURE_FREQ, moisture_seed, 4, 2.0, 0.5) * 0.8
+            + fbm(warped * 0.25, moisture_seed ^ 0x85eb, 2, 2.0, 0.5) * 0.2,
+    );
 
     let mut height = base * HEIGHT_AMPLITUDE;
     if height > 0.0 {
-        height += detail * HEIGHT_AMPLITUDE * 0.35 * land_mask;
+        let inland = smoothstep(0.08, 0.45, base);
+        height += (hills - 0.5) * HEIGHT_AMPLITUDE * 0.35 * land_mask;
+        height += ridges.powf(2.0) * HEIGHT_AMPLITUDE * 0.9 * inland;
+        height += detail * HEIGHT_AMPLITUDE * 0.07;
     } else {
-        height = height * 0.4 + detail * HEIGHT_AMPLITUDE * 0.08;
-        height = height.min(-0.2);
+        let depth = (-base).max(0.0);
+        let shelf = smoothstep(0.03, 0.2, depth);
+        let ocean = -depth.powf(1.35) * HEIGHT_AMPLITUDE * 0.85;
+        let shelf_lift = (1.0 - shelf) * HEIGHT_AMPLITUDE * 0.08;
+        height = ocean + shelf_lift + detail * HEIGHT_AMPLITUDE * 0.04;
+        height = height.min(-0.15);
     }
 
-    height
+    (height, moisture)
 }
 
-fn color_from_height(height: f32) -> [f32; 3] {
+fn color_from_height(height: f32, dir: Vec3, moisture: f32) -> [f32; 3] {
     let h = height / HEIGHT_AMPLITUDE;
+    if h < -0.45 {
+        return [0.02, 0.05, 0.12];
+    }
     if h < -0.18 {
-        return [0.03, 0.08, 0.18];
+        return [0.03, 0.1, 0.22];
     }
     if h < -0.05 {
-        return [0.05, 0.18, 0.32];
+        return [0.06, 0.22, 0.35];
     }
     if h < 0.03 {
-        return [0.76, 0.7, 0.52];
+        return [0.78, 0.72, 0.54];
     }
-    if h < 0.4 {
-        return [0.14, 0.52, 0.25];
+
+    let latitude = dir.y.abs();
+    let temp = (1.0 - latitude - h * 0.45).clamp(0.0, 1.0);
+    if h > 0.85 || temp < 0.15 {
+        return [0.9, 0.92, 0.96];
     }
-    if h < 0.7 {
-        return [0.38, 0.38, 0.34];
+    if h > 0.65 {
+        return [0.48, 0.46, 0.44];
     }
-    [0.86, 0.86, 0.92]
+    if temp < 0.3 {
+        return [0.62, 0.66, 0.6];
+    }
+
+    if moisture < 0.22 {
+        [0.8, 0.72, 0.45]
+    } else if moisture < 0.5 {
+        [0.22, 0.56, 0.28]
+    } else {
+        [0.08, 0.43, 0.22]
+    }
 }
 
 fn smoothstep(edge0: f32, edge1: f32, x: f32) -> f32 {
     let t = ((x - edge0) / (edge1 - edge0)).clamp(0.0, 1.0);
     t * t * (3.0 - 2.0 * t)
+}
+
+fn remap01(v: f32) -> f32 {
+    (v * 0.5 + 0.5).clamp(0.0, 1.0)
 }
 
 fn fbm(pos: Vec3, seed: u32, octaves: u32, lacunarity: f32, gain: f32) -> f32 {
@@ -298,6 +359,30 @@ fn fbm(pos: Vec3, seed: u32, octaves: u32, lacunarity: f32, gain: f32) -> f32 {
         freq *= lacunarity;
     }
     sum / norm
+}
+
+fn ridged_fbm(pos: Vec3, seed: u32, octaves: u32, lacunarity: f32, gain: f32) -> f32 {
+    let mut amp = 0.5;
+    let mut freq = 1.0;
+    let mut sum = 0.0;
+    let mut norm = 0.0;
+    for _ in 0..octaves {
+        let p = pos * freq;
+        let n = 1.0 - sample_noise_3d(p.x, p.y, p.z, seed).abs();
+        let ridge = n * n;
+        sum += ridge * amp;
+        norm += amp;
+        amp *= gain;
+        freq *= lacunarity;
+    }
+    (sum / norm).clamp(0.0, 1.0)
+}
+
+fn warp_dir(dir: Vec3, seed: u32) -> Vec3 {
+    let wx = fbm(dir * WARP_FREQ, seed, 3, 2.0, 0.5);
+    let wy = fbm(dir * WARP_FREQ + Vec3::splat(12.7), seed ^ 0x27d4, 3, 2.0, 0.5);
+    let wz = fbm(dir * WARP_FREQ + Vec3::splat(31.4), seed ^ 0x1656, 3, 2.0, 0.5);
+    Vec3::new(wx, wy, wz) * 0.35
 }
 
 fn sample_noise_3d(x: f32, y: f32, z: f32, seed: u32) -> f32 {
