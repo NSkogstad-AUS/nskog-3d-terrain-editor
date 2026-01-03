@@ -142,9 +142,21 @@ impl State {
 
     fn input(&mut self, event: &WindowEvent) -> bool {
         let mut handled = false;
+        #[cfg(feature = "ui")]
+        let ui_captures_pointer = {
+            if self.gui.on_event(&self.window, event) {
+                handled = true;
+            }
+            self.gui.ctx.wants_pointer_input()
+        };
+        #[cfg(not(feature = "ui"))]
+        let ui_captures_pointer = false;
 
         match event {
             WindowEvent::MouseInput { state, button, .. } => {
+                if ui_captures_pointer {
+                    return handled;
+                }
                 if *button == MouseButton::Left && *state == winit::event::ElementState::Pressed {
                     self.input.active = true;
                     self.set_cursor_grab(true);
@@ -152,12 +164,16 @@ impl State {
                 }
             }
             WindowEvent::MouseWheel { delta, .. } => {
-                handled |= self.input.handle_scroll(delta);
+                if !ui_captures_pointer {
+                    handled |= self.input.handle_scroll(delta);
+                }
             }
             WindowEvent::CursorMoved { position, .. } => {
-                let pos = glam::Vec2::new(position.x as f32, position.y as f32);
-                self.input.handle_cursor_move(pos);
-                handled = true;
+                if !ui_captures_pointer {
+                    let pos = glam::Vec2::new(position.x as f32, position.y as f32);
+                    self.input.handle_cursor_move(pos);
+                    handled = true;
+                }
             }
             WindowEvent::Focused(false) => {
                 self.input.active = false;
@@ -174,13 +190,6 @@ impl State {
                 }
             }
             _ => {}
-        }
-
-        #[cfg(feature = "ui")]
-        {
-            if self.gui.on_event(&self.window, event) {
-                handled = true;
-            }
         }
 
         handled
@@ -398,7 +407,25 @@ impl Gui {
                         randomize = true;
                     }
                     ui.separator();
-                    ui.label("Sand & biomes");
+                    ui.label("Land & biomes");
+                    settings_changed |= ui
+                        .add(
+                            egui::Slider::new(&mut settings.sea_threshold, 0.05..=0.45)
+                                .text("Sea level"),
+                        )
+                        .changed();
+                    settings_changed |= ui
+                        .add(
+                            egui::Slider::new(&mut settings.land_elevation_bias, -0.05..=0.15)
+                                .text("Land elevation bias"),
+                        )
+                        .changed();
+                    settings_changed |= ui
+                        .add(
+                            egui::Slider::new(&mut settings.temperature_bias, -0.2..=0.25)
+                                .text("Temperature bias"),
+                        )
+                        .changed();
                     settings_changed |= ui
                         .add(
                             egui::Slider::new(&mut settings.beach_max_height, 0.0..=0.08)
@@ -415,12 +442,6 @@ impl Gui {
                         .add(
                             egui::Slider::new(&mut settings.semi_arid_moisture_max, 0.0..=1.0)
                                 .text("Semi-arid moisture max"),
-                        )
-                        .changed();
-                    settings_changed |= ui
-                        .add(
-                            egui::Slider::new(&mut settings.land_elevation_bias, -0.05..=0.15)
-                                .text("Land elevation bias"),
                         )
                         .changed();
                     if settings.semi_arid_moisture_max < settings.desert_moisture_max {

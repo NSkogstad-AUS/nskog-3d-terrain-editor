@@ -11,33 +11,38 @@ const LON_POINTS: u32 = GRID + 1;
 const LAT_POINTS: u32 = GRID;
 const MAP_WIDTH: f32 = WORLD_RADIUS * std::f32::consts::TAU;
 const MAP_HEIGHT: f32 = WORLD_RADIUS * std::f32::consts::PI;
-const CONTINENT_FREQ: f32 = 1.0;
+const CONTINENT_FREQ: f32 = 1.9;
 const HILL_FREQ: f32 = 8.2;
 const MOUNTAIN_FREQ: f32 = 10.2;
 const DETAIL_FREQ: f32 = 19.0;
 const WARP_FREQ: f32 = 0.75;
 const MOISTURE_FREQ: f32 = 0.8;
-const SEA_THRESHOLD: f32 = 0.3;
-const DEFAULT_BEACH_MAX_HEIGHT: f32 = 0.0;
-const DEFAULT_DESERT_MOISTURE_MAX: f32 = 0.0;
-const DEFAULT_SEMI_ARID_MOISTURE_MAX: f32 = 0.0;
+const DEFAULT_SEA_THRESHOLD: f32 = 0.190;
+const DEFAULT_BEACH_MAX_HEIGHT: f32 = 0.09;
+const DEFAULT_DESERT_MOISTURE_MAX: f32 = 0.25;
+const DEFAULT_SEMI_ARID_MOISTURE_MAX: f32 = 0.35;
 const DEFAULT_LAND_ELEVATION_BIAS: f32 = 0.06;
+const DEFAULT_TEMPERATURE_BIAS: f32 = 0.110;
 
 #[derive(Copy, Clone, Debug)]
 pub struct TerrainSettings {
+    pub sea_threshold: f32,
     pub beach_max_height: f32,
     pub desert_moisture_max: f32,
     pub semi_arid_moisture_max: f32,
     pub land_elevation_bias: f32,
+    pub temperature_bias: f32,
 }
 
 impl Default for TerrainSettings {
     fn default() -> Self {
         Self {
+            sea_threshold: DEFAULT_SEA_THRESHOLD,
             beach_max_height: DEFAULT_BEACH_MAX_HEIGHT,
             desert_moisture_max: DEFAULT_DESERT_MOISTURE_MAX,
             semi_arid_moisture_max: DEFAULT_SEMI_ARID_MOISTURE_MAX,
             land_elevation_bias: DEFAULT_LAND_ELEVATION_BIAS,
+            temperature_bias: DEFAULT_TEMPERATURE_BIAS,
         }
     }
 }
@@ -376,7 +381,7 @@ fn height_for_dir(
     let warped = (dir + warp_dir(dir, warp_seed)).normalize_or_zero();
     let continent = fbm(warped * CONTINENT_FREQ, continent_seed, 5, 2.05, 0.5) * 0.85
         + fbm(warped * (CONTINENT_FREQ * 0.5), continent_seed ^ 0x9e37, 3, 2.2, 0.5) * 0.15;
-    let base = continent - SEA_THRESHOLD;
+    let base = continent - settings.sea_threshold;
     let land_mask = smoothstep(0.0, 0.2, base);
     let hills = remap01(fbm(warped * HILL_FREQ, hill_seed, 4, 2.1, 0.5));
     let ridges = ridged_fbm(warped * MOUNTAIN_FREQ, mountain_seed, 4, 2.0, 0.5);
@@ -413,7 +418,7 @@ fn color_from_height(
 ) -> [f32; 3] {
     let h = height / HEIGHT_AMPLITUDE;
     if h < -0.45 {
-        return [0.02, 0.05, 0.12];
+        return [0.04, 0.12, 0.24];
     }
     if h < -0.2 {
         return [0.03, 0.1, 0.22];
@@ -426,7 +431,7 @@ fn color_from_height(
     }
 
     let latitude = dir.y.abs();
-    let temp = (1.0 - latitude - h * 0.45).clamp(0.0, 1.0);
+    let temp = (1.0 - latitude - h * 0.45 + settings.temperature_bias).clamp(0.0, 1.0);
     if h > 0.85 || temp < 0.15 {
         return [0.9, 0.92, 0.96];
     }
