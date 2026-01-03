@@ -16,11 +16,54 @@ const HILL_FREQ: f32 = 8.2;
 const MOUNTAIN_FREQ: f32 = 10.2;
 const DETAIL_FREQ: f32 = 19.0;
 const WARP_FREQ: f32 = 0.75;
-const MOISTURE_FREQ: f32 = 0.22;
+const MOISTURE_FREQ: f32 = 0.8;
 const SEA_THRESHOLD: f32 = 0.3;
-const BEACH_MAX_HEIGHT: f32 = 0.005;
-const DESERT_MOISTURE_MAX: f32 = 0.1;
-const SEMI_ARID_MOISTURE_MAX: f32 = 0.1;
+const DEFAULT_BEACH_MAX_HEIGHT: f32 = 0.0;
+const DEFAULT_DESERT_MOISTURE_MAX: f32 = 0.0;
+const DEFAULT_SEMI_ARID_MOISTURE_MAX: f32 = 0.0;
+const DEFAULT_LAND_ELEVATION_BIAS: f32 = 0.06;
+
+#[derive(Copy, Clone, Debug)]
+pub struct TerrainSettings {
+    pub beach_max_height: f32,
+    pub desert_moisture_max: f32,
+    pub semi_arid_moisture_max: f32,
+    pub land_elevation_bias: f32,
+}
+
+impl Default for TerrainSettings {
+    fn default() -> Self {
+        Self {
+            beach_max_height: DEFAULT_BEACH_MAX_HEIGHT,
+            desert_moisture_max: DEFAULT_DESERT_MOISTURE_MAX,
+            semi_arid_moisture_max: DEFAULT_SEMI_ARID_MOISTURE_MAX,
+            land_elevation_bias: DEFAULT_LAND_ELEVATION_BIAS,
+        }
+    }
+}
+
+#[derive(Copy, Clone)]
+struct NoiseSeeds {
+    continent: u32,
+    hill: u32,
+    mountain: u32,
+    detail: u32,
+    moisture: u32,
+    warp: u32,
+}
+
+impl NoiseSeeds {
+    fn new(rng: &mut impl Rng) -> Self {
+        Self {
+            continent: rng.gen::<u32>(),
+            hill: rng.gen::<u32>(),
+            mountain: rng.gen::<u32>(),
+            detail: rng.gen::<u32>(),
+            moisture: rng.gen::<u32>(),
+            warp: rng.gen::<u32>(),
+        }
+    }
+}
 
 #[repr(C)]
 #[derive(Copy, Clone, bytemuck::Pod, bytemuck::Zeroable)]
@@ -62,6 +105,8 @@ pub struct Terrain {
     index_count: u32,
     uniform: wgpu::Buffer,
     bind_group: wgpu::BindGroup,
+    settings: TerrainSettings,
+    seeds: NoiseSeeds,
 }
 
 impl Terrain {
@@ -70,7 +115,9 @@ impl Terrain {
         format: wgpu::TextureFormat,
         rng: &mut impl Rng,
     ) -> Self {
-        let (vertices, indices) = generate_mesh(rng);
+        let settings = TerrainSettings::default();
+        let seeds = NoiseSeeds::new(rng);
+        let (vertices, indices) = generate_mesh(seeds, &settings);
 
         let vertex_buffer = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
             label: Some("terrain vertices"),
@@ -167,6 +214,8 @@ impl Terrain {
             index_count: indices.len() as u32,
             uniform,
             bind_group,
+            settings,
+            seeds,
         }
     }
 
@@ -189,8 +238,22 @@ impl Terrain {
         queue.write_buffer(&self.uniform, 0, bytemuck::bytes_of(&globals));
     }
 
+    pub fn settings(&self) -> TerrainSettings {
+        self.settings
+    }
+
+    pub fn set_settings(&mut self, queue: &wgpu::Queue, settings: TerrainSettings) {
+        self.settings = settings;
+        self.regenerate(queue);
+    }
+
     pub fn randomize(&mut self, queue: &wgpu::Queue, rng: &mut impl Rng) {
-        let (vertices, _) = generate_mesh(rng);
+        self.seeds = NoiseSeeds::new(rng);
+        self.regenerate(queue);
+    }
+
+    fn regenerate(&mut self, queue: &wgpu::Queue) {
+        let (vertices, _) = generate_mesh(self.seeds, &self.settings);
         queue.write_buffer(&self.vertex_buffer, 0, bytemuck::cast_slice(&vertices));
     }
 
@@ -203,13 +266,13 @@ impl Terrain {
     }
 }
 
-fn generate_mesh(rng: &mut impl Rng) -> (Vec<Vertex>, Vec<u32>) {
-    let continent_seed = rng.gen::<u32>();
-    let hill_seed = rng.gen::<u32>();
-    let mountain_seed = rng.gen::<u32>();
-    let detail_seed = rng.gen::<u32>();
-    let moisture_seed = rng.gen::<u32>();
-    let warp_seed = rng.gen::<u32>();
+fn generate_mesh(seeds: NoiseSeeds, settings: &TerrainSettings) -> (Vec<Vertex>, Vec<u32>) {
+    let continent_seed = seeds.continent;
+    let hill_seed = seeds.hill;
+    let mountain_seed = seeds.mountain;
+    let detail_seed = seeds.detail;
+    let moisture_seed = seeds.moisture;
+    let warp_seed = seeds.warp;
 
     let mut heights = vec![0.0f32; (LAT_POINTS * LON_POINTS) as usize];
     let mut moisture_map = vec![0.0f32; (LAT_POINTS * LON_POINTS) as usize];
@@ -232,6 +295,7 @@ fn generate_mesh(rng: &mut impl Rng) -> (Vec<Vertex>, Vec<u32>) {
                 detail_seed,
                 moisture_seed,
                 warp_seed,
+                settings,
             );
             let idx = (z * LON_POINTS + x) as usize;
             heights[idx] = height;
@@ -271,7 +335,12 @@ fn generate_mesh(rng: &mut impl Rng) -> (Vec<Vertex>, Vec<u32>) {
     let mut vertices = Vec::with_capacity((LAT_POINTS * LON_POINTS) as usize);
     for idx in 0..positions.len() {
         let height = heights[idx];
-        let color = color_from_height(height, positions[idx].normalize_or_zero(), moisture_map[idx]);
+        let color = color_from_height(
+            height,
+            positions[idx].normalize_or_zero(),
+            moisture_map[idx],
+            settings,
+        );
         vertices.push(Vertex {
             pos: positions[idx].into(),
             normal: normals[idx].into(),
@@ -302,6 +371,7 @@ fn height_for_dir(
     detail_seed: u32,
     moisture_seed: u32,
     warp_seed: u32,
+    settings: &TerrainSettings,
 ) -> (f32, f32) {
     let warped = (dir + warp_dir(dir, warp_seed)).normalize_or_zero();
     let continent = fbm(warped * CONTINENT_FREQ, continent_seed, 5, 2.05, 0.5) * 0.85
@@ -318,6 +388,7 @@ fn height_for_dir(
 
     let mut height = base * HEIGHT_AMPLITUDE;
     if height > 0.0 {
+        height += settings.land_elevation_bias * HEIGHT_AMPLITUDE;
         let inland = smoothstep(0.08, 0.45, base);
         height += (hills - 0.5) * HEIGHT_AMPLITUDE * 0.35 * land_mask;
         height += ridges.powf(2.0) * HEIGHT_AMPLITUDE * 0.9 * inland;
@@ -334,7 +405,12 @@ fn height_for_dir(
     (height, moisture)
 }
 
-fn color_from_height(height: f32, dir: Vec3, moisture: f32) -> [f32; 3] {
+fn color_from_height(
+    height: f32,
+    dir: Vec3,
+    moisture: f32,
+    settings: &TerrainSettings,
+) -> [f32; 3] {
     let h = height / HEIGHT_AMPLITUDE;
     if h < -0.45 {
         return [0.02, 0.05, 0.12];
@@ -342,10 +418,10 @@ fn color_from_height(height: f32, dir: Vec3, moisture: f32) -> [f32; 3] {
     if h < -0.2 {
         return [0.03, 0.1, 0.22];
     }
-    if h < -0.02 {
+    if h < 0.0 {
         return [0.06, 0.22, 0.35];
     }
-    if h < BEACH_MAX_HEIGHT {
+    if h < settings.beach_max_height {
         return [0.78, 0.72, 0.54];
     }
 
@@ -361,9 +437,9 @@ fn color_from_height(height: f32, dir: Vec3, moisture: f32) -> [f32; 3] {
         return [0.62, 0.66, 0.6];
     }
 
-    if moisture < DESERT_MOISTURE_MAX {
+    if moisture < settings.desert_moisture_max {
         [0.8, 0.72, 0.45]
-    } else if moisture < SEMI_ARID_MOISTURE_MAX {
+    } else if moisture < settings.semi_arid_moisture_max {
         [0.22, 0.56, 0.28]
     } else {
         [0.08, 0.43, 0.22]

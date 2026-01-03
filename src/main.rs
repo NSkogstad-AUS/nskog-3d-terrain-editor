@@ -295,6 +295,7 @@ impl State {
             &mut encoder,
             &self.config,
             self.map_target,
+            self.terrain.settings(),
         );
 
         #[cfg(feature = "ui")]
@@ -302,6 +303,10 @@ impl State {
             let mut submits = ui_frame.commands;
             submits.push(encoder.finish());
             self.queue.submit(submits);
+            if ui_frame.settings_changed {
+                self.terrain
+                    .set_settings(&self.queue, ui_frame.settings);
+            }
             if ui_frame.randomize {
                 self.terrain.randomize(&self.queue, &mut self.rng);
             }
@@ -329,6 +334,8 @@ struct UiFrame {
     commands: Vec<wgpu::CommandBuffer>,
     randomize: bool,
     toggle_map: bool,
+    settings: terrain::TerrainSettings,
+    settings_changed: bool,
 }
 
 #[cfg(feature = "ui")]
@@ -363,10 +370,13 @@ impl Gui {
         encoder: &mut wgpu::CommandEncoder,
         surface_config: &wgpu::SurfaceConfiguration,
         map_target: f32,
+        settings: terrain::TerrainSettings,
     ) -> UiFrame {
         let raw_input = self.state.take_egui_input(window);
         let mut randomize = false;
         let mut toggle_map = false;
+        let mut settings = settings;
+        let mut settings_changed = false;
         let full_output = self.ctx.run(raw_input, |ctx| {
             egui::Window::new("Overlay")
                 .resizable(false)
@@ -382,6 +392,36 @@ impl Gui {
                     }
                     if ui.button("Randomise").clicked() {
                         randomize = true;
+                    }
+                    ui.separator();
+                    ui.label("Sand & biomes");
+                    settings_changed |= ui
+                        .add(
+                            egui::Slider::new(&mut settings.beach_max_height, 0.0..=0.08)
+                                .text("Beach height"),
+                        )
+                        .changed();
+                    settings_changed |= ui
+                        .add(
+                            egui::Slider::new(&mut settings.desert_moisture_max, 0.0..=1.0)
+                                .text("Desert moisture max"),
+                        )
+                        .changed();
+                    settings_changed |= ui
+                        .add(
+                            egui::Slider::new(&mut settings.semi_arid_moisture_max, 0.0..=1.0)
+                                .text("Semi-arid moisture max"),
+                        )
+                        .changed();
+                    settings_changed |= ui
+                        .add(
+                            egui::Slider::new(&mut settings.land_elevation_bias, -0.05..=0.15)
+                                .text("Land elevation bias"),
+                        )
+                        .changed();
+                    if settings.semi_arid_moisture_max < settings.desert_moisture_max {
+                        settings.semi_arid_moisture_max = settings.desert_moisture_max;
+                        settings_changed = true;
                     }
                 });
         });
@@ -436,6 +476,8 @@ impl Gui {
             commands: user_cmd_bufs,
             randomize,
             toggle_map,
+            settings,
+            settings_changed,
         }
     }
 }
