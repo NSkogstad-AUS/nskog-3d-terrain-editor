@@ -168,6 +168,10 @@ impl State {
             }
             WindowEvent::KeyboardInput { event, .. } => {
                 handled |= self.input.handle_key(event);
+                if self.input.take_release_cursor() {
+                    self.set_cursor_grab(false);
+                    handled = true;
+                }
             }
             _ => {}
         }

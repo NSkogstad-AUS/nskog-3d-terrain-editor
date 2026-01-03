@@ -24,6 +24,7 @@ pub struct InputState {
     toggle_map: bool,
     last_cursor: Option<Vec2>,
     sensitivity: f32,
+    release_cursor: bool,
 }
 
 impl InputState {
@@ -49,6 +50,7 @@ impl InputState {
             toggle_map: false,
             last_cursor: None,
             sensitivity: 0.0025,
+            release_cursor: false,
         }
     }
 
@@ -78,9 +80,29 @@ impl InputState {
             PhysicalKey::Code(KeyCode::KeyM) if pressed => {
                 self.toggle_map = true;
             }
+            PhysicalKey::Code(KeyCode::Escape) if pressed => {
+                self.deactivate();
+                self.release_cursor = true;
+            }
             _ => return false,
         }
         true
+    }
+
+    pub fn take_release_cursor(&mut self) -> bool {
+        let release = self.release_cursor;
+        self.release_cursor = false;
+        release
+    }
+
+    pub fn deactivate(&mut self) {
+        self.active = false;
+        self.w = false;
+        self.a = false;
+        self.s = false;
+        self.d = false;
+        self.shift = false;
+        self.last_cursor = None;
     }
 
     pub fn update(&mut self, dt: f32) {
