@@ -1,4 +1,4 @@
-OUT_DIR = Some(/Users/nicolaiskogstad/!PROJECTS/nskog-3d-terrain-editor/target/debug/build/objc_exception-0de4153794da3d94/out)
+OUT_DIR = Some(/Users/nicolaiskogstad/PROJECTS/nskog-3d-terrain-editor/target/debug/build/objc_exception-0de4153794da3d94/out)
 OPT_LEVEL = Some(0)
 TARGET = Some(aarch64-apple-darwin)
 CARGO_ENCODED_RUSTFLAGS = Some()
@@ -43,4 +43,4 @@ ARFLAGS_aarch64_apple_darwin = None
 cargo:rerun-if-env-changed=ARFLAGS_aarch64-apple-darwin
 ARFLAGS_aarch64-apple-darwin = None
 cargo:rustc-link-lib=static=exception
-cargo:rustc-link-search=native=/Users/nicolaiskogstad/!PROJECTS/nskog-3d-terrain-editor/target/debug/build/objc_exception-0de4153794da3d94/out
+cargo:rustc-link-search=native=/Users/nicolaiskogstad/PROJECTS/nskog-3d-terrain-editor/target/debug/build/objc_exception-0de4153794da3d94/out

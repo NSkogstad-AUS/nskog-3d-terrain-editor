@@ -12,3 +12,8 @@ A procedural globe terrain editor with a globe-to-map transition, orbit camera, 
 
 ### 3
 ![Screenshot 3](Readme/3.png)
+
+In order to run the project:
+# cargo run
+or with UI features enabled:
+# cargo run --features ui
